@@ -99,10 +99,22 @@ class BrowserFingerprint:
 
     WINDOWS_VERSIONS = ["10.0.0", "10.0.19041", "10.0.22000", "10.0.22621", "10.0.26100"]
     PLATFORM_VERSIONS = ["15.0.0", "15.0.1", "15.0.2", "15.0.3"]
+    
+    # Mobile device models for Android
+    ANDROID_MODELS = [
+        "SM-G998B", "SM-G991B", "SM-A528B", "SM-A725F",  # Samsung
+        "Pixel 6", "Pixel 6 Pro", "Pixel 7", "Pixel 7 Pro", "Pixel 8",  # Google Pixel
+        "2201123G", "2107113SG", "M2102J20SG",  # Xiaomi
+        "V2158", "V2055",  # Vivo
+        "CPH2447", "CPH2357",  # OPPO
+    ]
+    
+    ANDROID_VERSIONS = ["12", "13", "14", "15"]
 
     def __init__(self, phantomkit_profile: "_PKProfile" = None, geo: Optional[str] = 'us',
                  proxy: Optional[str] = None, force_platform: Optional[str] = None,
-                 languages: Optional[List[str]] = None, timezone: Optional[str] = None):
+                 languages: Optional[List[str]] = None, timezone: Optional[str] = None,
+                 mobile: bool = True):
         """Build fingerprint.
 
         When phantomkit is installed, the profile (HardwareFingerprint +
@@ -114,10 +126,14 @@ class BrowserFingerprint:
 
         When phantomkit is unavailable, a deterministic random Chrome/Windows
         profile is generated locally (the legacy behaviour, via _generate()).
+        
+        Args:
+            mobile: If True, generates Android mobile fingerprint; if False, desktop Windows
         """
         self._pk_profile = None
         self._user_agent = None
-        self._platform_hint = '"Windows"'
+        self._platform_hint = '"Android"' if mobile else '"Windows"'
+        self._mobile = mobile
         if PHANTOMKIT_AVAILABLE:
             self._setup_from_phantomkit(
                 phantomkit_profile or _PKProfile.create(
@@ -211,11 +227,19 @@ class BrowserFingerprint:
         }
         self.timezone_offset = tz_offsets.get(self.timezone, 0)
 
-        # IG wire hints are fixed to Windows; TLS impersonate is already aligned
-        # by phantomkit NetworkFingerprint.for_hardware.
-        self._user_agent = (f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                            f"AppleWebKit/537.36 (KHTML, like Gecko) "
-                            f"Chrome/{self.chrome_major}.0.0.0 Safari/537.36")
+        # Generate mobile or desktop user agent based on _mobile flag
+        if getattr(self, '_mobile', False):
+            android_version = random.choice(self.ANDROID_VERSIONS)
+            self.device_model = random.choice(self.ANDROID_MODELS)
+            self._user_agent = (f"Mozilla/5.0 (Linux; Android {android_version}; {self.device_model}) "
+                                f"AppleWebKit/537.36 (KHTML, like Gecko) "
+                                f"Chrome/{self.chrome_major}.0.0.0 Mobile Safari/537.36")
+        else:
+            # IG wire hints are fixed to Windows; TLS impersonate is already aligned
+            # by phantomkit NetworkFingerprint.for_hardware.
+            self._user_agent = (f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                                f"AppleWebKit/537.36 (KHTML, like Gecko) "
+                                f"Chrome/{self.chrome_major}.0.0.0 Safari/537.36")
 
     @property
     def pk_profile(self):
@@ -237,6 +261,13 @@ class BrowserFingerprint:
     def user_agent(self) -> str:
         if self._user_agent:
             return self._user_agent
+        # Default to mobile if _mobile is True or not set
+        if getattr(self, '_mobile', True):
+            android_version = getattr(self, 'android_version', random.choice(self.ANDROID_VERSIONS))
+            device_model = getattr(self, 'device_model', random.choice(self.ANDROID_MODELS))
+            return (f"Mozilla/5.0 (Linux; Android {android_version}; {device_model}) "
+                    f"AppleWebKit/537.36 (KHTML, like Gecko) "
+                    f"Chrome/{self.chrome_major}.0.0.0 Mobile Safari/537.36")
         return self.__dict__.get('user_agent', '') or (
             f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
             f"(KHTML, like Gecko) Chrome/{self.chrome_major}.0.0.0 Safari/537.36"
@@ -248,16 +279,98 @@ class BrowserFingerprint:
         self.__dict__['user_agent'] = value
 
     def _generate(self):
-        """Generate a complete unique fingerprint."""
+        """Generate a complete unique fingerprint (mobile by default)."""
         major = random.randint(130, 147)
         self.chrome_major = str(major)
         self.chrome_full_version = self.CHROME_BUILDS.get(major, f"{major}.0.7000.100")
 
-        self.user_agent = (
-            f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            f"AppleWebKit/537.36 (KHTML, like Gecko) "
-            f"Chrome/{major}.0.0.0 Safari/537.36"
-        )
+        # Generate mobile or desktop fingerprint based on _mobile flag
+        if getattr(self, '_mobile', True):
+            # Mobile Android fingerprint
+            android_version = random.choice(self.ANDROID_VERSIONS)
+            self.android_version = android_version
+            self.device_model = random.choice(self.ANDROID_MODELS)
+            
+            self.user_agent = (
+                f"Mozilla/5.0 (Linux; Android {android_version}; {self.device_model}) "
+                f"AppleWebKit/537.36 (KHTML, like Gecko) "
+                f"Chrome/{major}.0.0.0 Mobile Safari/537.36"
+            )
+            
+            # Mobile screen sizes
+            screen_choices = [
+                (1080, 2400), (1080, 2340), (1440, 3200),  # Modern phones
+                (1080, 2520), (1080, 2280), (720, 1600),   # Budget phones
+            ]
+            w, h = random.choice(screen_choices)
+            self.hw_profile = {
+                "device_memory": random.choice([4, 6, 8, 8, 12]),
+                "rtt": random.choice([25, 50, 75, 100, 150, 200]),
+                "downlink": random.choice([1.5, 5.0, 10.0, 20.0, 50.0]),
+                "screen_width": w,
+                "screen_height": h,
+                "viewport_width": w,
+                "viewport_height": h - random.randint(100, 180),
+            }
+            
+            # Mobile DPR
+            dpr_choices = [2.0, 2.5, 2.75, 3.0, 3.5, 4.0]
+            self.dpr = random.choice(dpr_choices)
+            
+            # Mobile platform version (Android)
+            self.platform_version = random.choice(["12", "13", "14", "15"])
+            
+            # Mobile touch points
+            self.max_touch_points = random.choice([5, 10])
+            
+            # Mobile WebGL (Adreno/Mali)
+            webgl_renderers = [
+                ("Google Inc. (Qualcomm)", "ANGLE (Qualcomm, Adreno (GPU) ES 3.2 Vulkan 1.1"),
+                ("Google Inc. (ARM)", "ANGLE (ARM, Mali-G78 ES 3.2 Vulkan 1.1"),
+                ("Google Inc. (ARM)", "ANGLE (ARM, Mali-G710 ES 3.2 Vulkan 1.1"),
+            ]
+            self.webgl_vendor, self.webgl_renderer = random.choice(webgl_renderers)
+        else:
+            # Desktop Windows fingerprint (legacy)
+            self.user_agent = (
+                f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                f"AppleWebKit/537.36 (KHTML, like Gecko) "
+                f"Chrome/{major}.0.0.0 Safari/537.36"
+            )
+            
+            # Set empty device_model for desktop
+            self.device_model = ""
+            self.android_version = ""
+            
+            mem_choices = [2, 4, 8, 8, 8, 16, 16, 32]
+            screen_choices = [
+                (1920, 1080), (1920, 1080), (1920, 1080),
+                (2560, 1440), (1440, 900), (1366, 768),
+                (1280, 800),  (1600, 900),
+            ]
+            w, h = random.choice(screen_choices)
+            self.hw_profile = {
+                "device_memory": random.choice(mem_choices),
+                "rtt": random.choice([25, 50, 75, 100, 150, 200]),
+                "downlink": random.choice([1.5, 5.0, 10.0, 20.0, 50.0]),
+                "screen_width": w,
+                "screen_height": h,
+                "viewport_width": w,
+                "viewport_height": h - random.randint(70, 120),
+            }
+            
+            dpr_choices = [1.0, 1.25, 1.5, 2.0, 2.5, 3.0]
+            self.dpr = random.choice(dpr_choices)
+            self.platform_version = random.choice(self.PLATFORM_VERSIONS)
+            self.max_touch_points = 0
+            
+            webgl_renderers = [
+                ("Google Inc. (NVIDIA)", "ANGLE (NVIDIA, NVIDIA GeForce GTX 1060 6GB Direct3D11 vs_5_0 ps_5_0, D3D11)"),
+                ("Google Inc. (NVIDIA)", "ANGLE (NVIDIA, NVIDIA GeForce RTX 2060 Direct3D11 vs_5_0 ps_5_0, D3D11)"),
+                ("Google Inc. (AMD)", "ANGLE (AMD, AMD Radeon RX 580 Direct3D11 vs_5_0 ps_5_0, D3D11)"),
+                ("Google Inc. (Intel)", "ANGLE (Intel, Intel(R) UHD Graphics 630 Direct3D11 vs_5_0 ps_5_0, D3D11)"),
+            ]
+            self.webgl_vendor, self.webgl_renderer = random.choice(webgl_renderers)
 
         self.sec_ch_ua = (
             f'"Google Chrome";v="{major}", '
@@ -267,28 +380,6 @@ class BrowserFingerprint:
             f'"Google Chrome";v="{self.chrome_full_version}", '
             f'"Not.A/Brand";v="8.0.0.0", "Chromium";v="{self.chrome_full_version}"'
         )
-
-        mem_choices = [2, 4, 8, 8, 8, 16, 16, 32]
-        screen_choices = [
-            (1920, 1080), (1920, 1080), (1920, 1080),
-            (2560, 1440), (1440, 900), (1366, 768),
-            (1280, 800),  (1600, 900),
-        ]
-        w, h = random.choice(screen_choices)
-        self.hw_profile = {
-            "device_memory": random.choice(mem_choices),
-            "rtt": random.choice([25, 50, 75, 100, 150, 200]),
-            "downlink": random.choice([1.5, 5.0, 10.0, 20.0, 50.0]),
-            "screen_width": w,
-            "screen_height": h,
-            "viewport_width": w,
-            "viewport_height": h - random.randint(70, 120),
-        }
-
-        dpr_choices = [1.0, 1.25, 1.5, 2.0, 2.5, 3.0]
-        self.dpr = random.choice(dpr_choices)
-
-        self.platform_version = random.choice(self.PLATFORM_VERSIONS)
 
         self.ig_did = str(uuid.uuid4()).upper()
         self.datr = base64.b64encode(os.urandom(18)).decode().rstrip("=")
@@ -300,18 +391,6 @@ class BrowserFingerprint:
         self.audio_sample_rate = random.choice([44100, 48000])
         self.audio_channel_count = random.choice([1, 2])
 
-        webgl_renderers = [
-            ("Google Inc. (NVIDIA)", "ANGLE (NVIDIA, NVIDIA GeForce GTX 1060 6GB Direct3D11 vs_5_0 ps_5_0, D3D11)"),
-            ("Google Inc. (NVIDIA)", "ANGLE (NVIDIA, NVIDIA GeForce RTX 2060 Direct3D11 vs_5_0 ps_5_0, D3D11)"),
-            ("Google Inc. (NVIDIA)", "ANGLE (NVIDIA, NVIDIA GeForce GTX 1660 Ti Direct3D11 vs_5_0 ps_5_0, D3D11)"),
-            ("Google Inc. (AMD)", "ANGLE (AMD, AMD Radeon RX 580 Direct3D11 vs_5_0 ps_5_0, D3D11)"),
-            ("Google Inc. (Intel)", "ANGLE (Intel, Intel(R) UHD Graphics 630 Direct3D11 vs_5_0 ps_5_0, D3D11)"),
-            ("Google Inc. (Intel)", "ANGLE (Intel, Intel(R) HD Graphics 530 Direct3D11 vs_5_0 ps_5_0, D3D11)"),
-            ("Google Inc. (NVIDIA)", "ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)"),
-            ("Google Inc. (AMD)", "ANGLE (AMD, AMD Radeon RX 5600 XT Direct3D11 vs_5_0 ps_5_0, D3D11)"),
-        ]
-        self.webgl_vendor, self.webgl_renderer = random.choice(webgl_renderers)
-
         self.plugins = [
             {"name": "PDF Plugin", "description": "Portable Document Format", "filename": "internal-pdf-viewer"},
             {"name": "PDF Viewer", "description": "", "filename": "mhjfbmdgcfjbbpaeojofohoefgiehjai"},
@@ -321,8 +400,7 @@ class BrowserFingerprint:
         self.screen_color_depth = random.choice([24, 30, 32])
         self.screen_pixel_depth = random.choice([24, 30, 32])
 
-        self.hardware_concurrency = random.choice([2, 4, 6, 8, 12, 16])
-        self.max_touch_points = 0
+        self.hardware_concurrency = random.choice([4, 6, 8, 8, 12])
 
         self.language = "en-US"
         self.languages = ["en-US", "en"]
@@ -331,7 +409,7 @@ class BrowserFingerprint:
         self.timezone_offset = random.choice([-300, -360, -420, -480, 0, 60, 120, 180])
 
     def get_nav_headers(self, referer=None, from_google=False):
-        """Generate navigation headers for page loads."""
+        """Generate navigation headers for page loads (MOBILE)."""
         fetch_site = "cross-site" if from_google else "none"
         ref = referer or ("https://www.google.com/" if from_google else None)
 
@@ -345,16 +423,16 @@ class BrowserFingerprint:
             "Accept-Encoding": "gzip, deflate, br, zstd",
             "Accept-Language": "en-US,en;q=0.9",
             "Sec-Ch-Ua": self.sec_ch_ua,
-            "Sec-Ch-Ua-Mobile": "?0",
-            "Sec-Ch-Ua-Platform": '"Windows"',
+            "Sec-Ch-Ua-Mobile": "?1",
+            "Sec-Ch-Ua-Platform": '"Android"',
             "Sec-Ch-Ua-Full-Version-List": self.sec_ch_ua_full_version,
             "Sec-Ch-Ua-Full-Version": f'"{self.chrome_full_version}"',
-            "Sec-Ch-Ua-Arch": '"x86"',
+            "Sec-Ch-Ua-Arch": '""',
             "Sec-Ch-Ua-Platform-Version": f'"{self.platform_version}"',
-            "Sec-Ch-Ua-Model": '""',
+            "Sec-Ch-Ua-Model": self.device_model,
             "Sec-Ch-Ua-Bitness": '"64"',
             "Sec-Ch-Ua-Wow64": "?0",
-            "Sec-Ch-Ua-Form-Factors": '"Desktop"',
+            "Sec-Ch-Ua-Form-Factors": '"Phone"',
             "Sec-Ch-Prefers-Color-Scheme": "light",
             "Upgrade-Insecure-Requests": "1",
             "Sec-Fetch-Site": fetch_site,
@@ -368,7 +446,7 @@ class BrowserFingerprint:
         return h
 
     def get_api_headers(self, csrf_token=None, lsd=None, ig_www_claim=None):
-        """Generate AJAX/API headers for GraphQL requests."""
+        """Generate AJAX/API headers for GraphQL requests (MOBILE)."""
         h = {
             "User-Agent": self.user_agent,
             "Accept": "*/*",
@@ -382,19 +460,19 @@ class BrowserFingerprint:
             "Sec-Ch-Ua": self.sec_ch_ua,
             "Sec-Ch-Ua-Full-Version-List": self.sec_ch_ua_full_version,
             "Sec-Ch-Ua-Full-Version": f'"{self.chrome_full_version}"',
-            "Sec-Ch-Ua-Mobile": "?0",
-            "Sec-Ch-Ua-Model": '""',
-            "Sec-Ch-Ua-Platform": '"Windows"',
+            "Sec-Ch-Ua-Mobile": "?1",
+            "Sec-Ch-Ua-Model": self.device_model,
+            "Sec-Ch-Ua-Platform": '"Android"',
             "Sec-Ch-Ua-Platform-Version": f'"{self.platform_version}"',
-            "Sec-Ch-Ua-Arch": '"x86"',
+            "Sec-Ch-Ua-Arch": '""',
             "Sec-Ch-Ua-Bitness": '"64"',
             "Sec-Ch-Ua-Wow64": "?0",
-            "Sec-Ch-Ua-Form-Factors": '"Desktop"',
+            "Sec-Ch-Ua-Form-Factors": '"Phone"',
             "Sec-Ch-Prefers-Color-Scheme": "light",
             "Dpr": str(self.dpr),
             "Viewport-Width": str(self.hw_profile["viewport_width"]),
             "X-IG-App-ID": "936619743392459",
-            "X-IG-Max-Touch-Points": "0",
+            "X-IG-Max-Touch-Points": "5",
             "X-ASBD-ID": "359341",
             "Priority": "u=1, i",
         }
@@ -950,6 +1028,15 @@ class InstagramRegistrar:
         fp = self.fingerprint
         hw = self._hw_profile
         lang = self._lang_to_accept(self.accept_language)
+        
+        # Check if mobile mode (default to True for backward compatibility)
+        is_mobile = getattr(fp, '_mobile', True)
+        
+        # For desktop mode, ensure proper headers
+        if not is_mobile:
+            device_model_val = getattr(fp, 'device_model', '') or ''
+        else:
+            device_model_val = getattr(fp, 'device_model', '')
 
         h = {
             "User-Agent": self.user_agent,
@@ -964,19 +1051,19 @@ class InstagramRegistrar:
             "Sec-Ch-Ua": fp.sec_ch_ua,
             "Sec-Ch-Ua-Full-Version-List": fp.sec_ch_ua_full_version,
             "Sec-Ch-Ua-Full-Version": f'"{self._chrome_full_version}"',
-            "Sec-Ch-Ua-Mobile": "?0",
-            "Sec-Ch-Ua-Model": '""',
-            "Sec-Ch-Ua-Platform": '"Windows"',
+            "Sec-Ch-Ua-Mobile": "?1" if is_mobile else "?0",
+            "Sec-Ch-Ua-Model": f'"{device_model_val}"',
+            "Sec-Ch-Ua-Platform": '"Android"' if is_mobile else '"Windows"',
             "Sec-Ch-Ua-Platform-Version": f'"{fp.platform_version}"',
-            "Sec-Ch-Ua-Arch": '"x86"',
+            "Sec-Ch-Ua-Arch": '""' if is_mobile else '"x86"',
             "Sec-Ch-Ua-Bitness": '"64"',
             "Sec-Ch-Ua-Wow64": "?0",
-            "Sec-Ch-Ua-Form-Factors": '"Desktop"',
+            "Sec-Ch-Ua-Form-Factors": '"Phone"' if is_mobile else '"Desktop"',
             "Sec-Ch-Prefers-Color-Scheme": "light",
             "Dpr": str(self._real_dpr) if self._real_dpr else "1",
             "Viewport-Width": str(hw["viewport_width"]),
             "X-IG-App-ID": "936619743392459",
-            "X-IG-Max-Touch-Points": "0",
+            "X-IG-Max-Touch-Points": "5" if is_mobile else "0",
             "X-ASBD-ID": self._x_asbd_id,
             "Priority": "u=1, i",
         }
@@ -996,6 +1083,15 @@ class InstagramRegistrar:
         lang = self._lang_to_accept(self.accept_language)
         fetch_site = "cross-site" if from_google else "none"
         ref = referer or ("https://www.google.com/" if from_google else None)
+        
+        # Check if mobile mode (default to True for backward compatibility)
+        is_mobile = getattr(fp, '_mobile', True)
+        
+        # For desktop mode, ensure proper headers
+        if not is_mobile:
+            device_model_val = getattr(fp, 'device_model', '') or ''
+        else:
+            device_model_val = getattr(fp, 'device_model', '')
 
         h = {
             "User-Agent": self.user_agent,
@@ -1007,16 +1103,16 @@ class InstagramRegistrar:
             "Accept-Encoding": "gzip, deflate, br, zstd",
             "Accept-Language": lang,
             "Sec-Ch-Ua": fp.sec_ch_ua,
-            "Sec-Ch-Ua-Mobile": "?0",
-            "Sec-Ch-Ua-Platform": '"Windows"',
+            "Sec-Ch-Ua-Mobile": "?1" if is_mobile else "?0",
+            "Sec-Ch-Ua-Platform": '"Android"' if is_mobile else '"Windows"',
             "Sec-Ch-Ua-Full-Version-List": fp.sec_ch_ua_full_version,
             "Sec-Ch-Ua-Full-Version": f'"{self._chrome_full_version}"',
-            "Sec-Ch-Ua-Arch": '"x86"',
+            "Sec-Ch-Ua-Arch": '""' if is_mobile else '"x86"',
             "Sec-Ch-Ua-Platform-Version": f'"{fp.platform_version}"',
-            "Sec-Ch-Ua-Model": '""',
+            "Sec-Ch-Ua-Model": f'"{device_model_val}"',
             "Sec-Ch-Ua-Bitness": '"64"',
             "Sec-Ch-Ua-Wow64": "?0",
-            "Sec-Ch-Ua-Form-Factors": '"Desktop"',
+            "Sec-Ch-Ua-Form-Factors": '"Phone"' if is_mobile else '"Desktop"',
             "Sec-Ch-Prefers-Color-Scheme": "light",
             "Upgrade-Insecure-Requests": "1",
             "Sec-Fetch-Site": fetch_site,
